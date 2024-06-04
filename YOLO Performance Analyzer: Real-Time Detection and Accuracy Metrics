@@ -1,0 +1,443 @@
+First Code -> allobjectsclassificationusingvideofile
+
+# import the necessary packages
+import numpy as np
+import argparse
+import imutils
+import time
+import cv2
+import os
+
+
+# construct the argument parse and parse the arguments
+ap = argparse.ArgumentParser()
+ap.add_argument("-i", "--input", required=True,
+	help="path to input video")
+ap.add_argument("-c", "--confidence", type=float, default=0.5,
+	help="minimum probability to filter weak detections")
+ap.add_argument("-t", "--threshold", type=float, default=0.3,
+	help="threshold when applyong non-maxima suppression")
+args = vars(ap.parse_args())
+
+# load the COCO class labels our YOLO model was trained on
+# my_file = "C:/Users/tamal sarkar/Downloads/College Project/Python/coco.txt"
+labelsPath = os.path.sep.join(["coco.txt"])
+LABELS = open(labelsPath).read().strip().split("\n")
+
+# initialize a list of colors to represent each possible class label
+np.random.seed(42)
+COLORS = np.random.randint(0, 255, size=(len(LABELS), 3),
+	dtype="uint8")
+
+# derive the paths to the YOLO weights and model configuration
+weightsPath = os.path.sep.join(["yolov3.weights"])
+configPath = os.path.sep.join(["yolov3.cfg"])
+
+# load our YOLO object detector trained on COCO dataset (80 classes)
+# and determine only the *output* layer names that we need from YOLO
+print("[INFO] loading YOLO from disk...")
+net = cv2.dnn.readNetFromDarknet(configPath, weightsPath)
+ln = net.getLayerNames()
+ln = [ln[i - 1] for i in net.getUnconnectedOutLayers()]
+
+# initialize the video stream, pointer to output video file, and
+# frame dimensions
+
+if args['input']== str(0):
+   vs= cv2.VideoCapture(0)
+else:
+   vs=cv2.VideoCapture(args['input'])
+
+writer = None
+(W, H) = (None, None)
+
+# try to determine the total number of frames in the video file
+try:
+	prop = cv2.cv.CV_CAP_PROP_FRAME_COUNT if imutils.is_cv2() \
+		else cv2.CAP_PROP_FRAME_COUNT
+	total = int(vs.get(prop))
+	print("[INFO] {} total frames in video".format(total))
+
+# an error occurred while trying to determine the total
+# number of frames in the video file
+except:
+	print("[INFO] could not determine # of frames in video")
+	print("[INFO] no approx. completion time can be provided")
+	total = -1
+
+# loop over frames from the video file stream
+while True:
+	# read the next frame from the file
+	(grabbed, frame) = vs.read() 
+
+	# if the frame was not grabbed, then we have reached the end
+	# of the stream
+	if not grabbed:
+		break
+
+	# if the frame dimensions are empty, grab them
+	if W is None or H is None:
+		(H, W) = frame.shape[:2]
+
+	# construct a blob from the input frame and then perform a forward
+	# pass of the YOLO object detector, giving us our bounding boxes
+	# and associated probabilities
+	blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (416, 416),
+		swapRB=True, crop=False)
+	net.setInput(blob)
+	start = time.time()
+	layerOutputs = net.forward(ln)
+	end = time.time()
+
+	# initialize our lists of detected bounding boxes, confidences,
+	# and class IDs, respectively
+	boxes = []
+	confidences = []
+	classIDs = []
+
+	# loop over each of the layer outputs
+	for output in layerOutputs:
+		# loop over each of the detections
+		for detection in output:
+			# extract the class ID and confidence (i.e., probability)
+			# of the current object detection
+			scores = detection[5:]
+			classID = np.argmax(scores)
+			confidence = scores[classID]
+
+			# filter out weak predictions by ensuring the detected
+			# probability is greater than the minimum probability
+			if confidence > args["confidence"]:
+				# scale the bounding box coordinates back relative to
+				# the size of the image, keeping in mind that YOLO
+				# actually returns the center (x, y)-coordinates of
+				# the bounding box followed by the boxes' width and
+				# height
+				box = detection[0:4] * np.array([W, H, W, H])
+				(centerX, centerY, width, height) = box.astype("int")
+
+				# use the center (x, y)-coordinates to derive the top
+				# and and left corner of the bounding box
+				x = int(centerX - (width / 2))
+				y = int(centerY - (height / 2))
+
+				# update our list of bounding box coordinates,
+				# confidences, and class IDs
+				boxes.append([x, y, int(width), int(height)])
+				confidences.append(float(confidence))
+				classIDs.append(classID)
+
+	# apply non-maxima suppression to suppress weak, overlapping
+	# bounding boxes
+	idxs = cv2.dnn.NMSBoxes(boxes, confidences, args["confidence"],
+		args["threshold"])
+
+	# ensure at least one detection exists
+	if len(idxs) > 0:
+		# loop over the indexes we are keeping
+		for i in idxs.flatten():
+			# extract the bounding box coordinates
+			(x, y) = (boxes[i][0], boxes[i][1])
+			(w, h) = (boxes[i][2], boxes[i][3])
+
+			# draw a bounding box rectangle and label on the frame
+			color = [int(c) for c in COLORS[classIDs[i]]]
+			cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+			text = "{}: {:.4f}".format(LABELS[classIDs[i]],
+				confidences[i])
+			cv2.putText(frame, text, (x, y - 5),
+				cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+	cv2.imshow('outputWindows',frame)
+	if cv2.waitKey(10) & 0xFF == ord('q'):# Press 'ESC' for exiting video
+		break 
+
+
+# release the file pointers
+print("[INFO] cleaning up...")
+vs.release()
+cv2.destroyAllWindows()
+
+Second code -> imageClassifyAccuracy
+
+import numpy as np
+import argparse
+import cv2
+import os
+
+def calculate_iou(boxA, boxB):
+    # Calculate coordinates of the intersection rectangle
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[0] + boxA[2], boxB[0] + boxB[2])
+    yB = min(boxA[1] + boxA[3], boxB[1] + boxB[3])
+
+    # Calculate area of intersection rectangle
+    intersection_area = max(0, xB - xA + 1) * max(0, yB - yA + 1)
+
+    # Calculate area of both bounding boxes
+    boxA_area = (boxA[2] + 1) * (boxA[3] + 1)
+    boxB_area = (boxB[2] + 1) * (boxB[3] + 1)
+
+    # Calculate IoU
+    iou = intersection_area / float(boxA_area + boxB_area - intersection_area)
+
+    return iou
+
+# construct the argument parse and parse the arguments
+ap = argparse.ArgumentParser()
+ap.add_argument("-i", "--input", required=True,
+    help="path to input image")
+ap.add_argument("-c", "--confidence", type=float, default=0.5,
+    help="minimum probability to filter weak detections")
+ap.add_argument("-t", "--threshold", type=float, default=0.3,
+    help="threshold when applying non-maxima suppression")
+ap.add_argument("-gt", "--ground_truth", required=True,
+    help="path to ground truth annotations file")
+args = vars(ap.parse_args())
+
+# Load the COCO class labels our YOLO model was trained on
+labelsPath = os.path.sep.join(["coco.txt"])
+LABELS = open(labelsPath).read().strip().split("\n")
+
+# Initialize a list of colors to represent each possible class label
+np.random.seed(42)
+COLORS = np.random.randint(0, 255, size=(len(LABELS), 3), dtype="uint8")
+
+# Load the YOLO model
+weightsPath = os.path.sep.join(["yolov3.weights"])
+configPath = os.path.sep.join(["yolov3.cfg"])
+net = cv2.dnn.readNetFromDarknet(configPath, weightsPath)
+ln = net.getLayerNames()
+ln = [ln[i - 1] for i in net.getUnconnectedOutLayers()]
+
+# Load the input image
+image = cv2.imread(args["input"])
+(H, W) = image.shape[:2]
+
+# Construct a blob from the input image and perform a forward
+# pass of the YOLO object detector
+blob = cv2.dnn.blobFromImage(image, 1 / 255.0, (416, 416), swapRB=True, crop=False)
+net.setInput(blob)
+layerOutputs = net.forward(ln)
+
+# Initialize lists of detected bounding boxes, confidences, and class IDs
+boxes = []
+confidences = []
+classIDs = []
+
+# Loop over each of the layer outputs
+for output in layerOutputs:
+    for detection in output:
+        scores = detection[5:]
+        classID = np.argmax(scores)
+        confidence = scores[classID]
+
+        if confidence > args["confidence"]:
+            box = detection[0:4] * np.array([W, H, W, H])
+            (centerX, centerY, width, height) = box.astype("int")
+            x = int(centerX - (width / 2))
+            y = int(centerY - (height / 2))
+            boxes.append([x, y, int(width), int(height)])
+            confidences.append(float(confidence))
+            classIDs.append(classID)
+
+# Apply non-maxima suppression
+idxs = cv2.dnn.NMSBoxes(boxes, confidences, args["confidence"], args["threshold"])
+
+# Load ground truth annotations
+# Assuming ground truth format: [classID, x, y, w, h]
+gt_annotations = []
+with open(args["ground_truth"], "r") as f:
+    for line in f:
+        parts = line.strip().split()
+        classID = int(parts[0])
+        x, y, w, h = map(int, parts[1:])
+        gt_annotations.append([classID, x, y, w, h])
+
+# Initialize counters for accuracy evaluation
+total_gt_objects = len(gt_annotations)
+tp = 0  # True Positives
+
+# Evaluate each detected object against ground truth
+for i in idxs.flatten():
+    pred_box = boxes[i]
+    pred_classID = classIDs[i]
+    pred_class_label = LABELS[pred_classID]
+
+    # Check for any ground truth object that matches the predicted class
+    for gt_annotation in gt_annotations:
+        gt_classID = gt_annotation[0]
+        gt_box = gt_annotation[1:]
+        if pred_classID == gt_classID:
+            iou = calculate_iou(pred_box, gt_box)
+            if iou >= 0.5:  # Set IoU threshold for a true positive
+                tp += 1
+                break
+
+# for checking purposes
+#print the detections
+i=0
+for box in boxes:
+    print(classIDs[i], end=" ")
+    for val in box:
+        print(val, end=" ")
+    print("\n")
+    i+=1
+
+
+# Calculate accuracy metrics
+accuracy = tp / len(idxs) if len(idxs) > 0 else 0
+recall = tp / total_gt_objects if total_gt_objects > 0 else 0
+precision = tp / total_gt_objects if total_gt_objects > 0 else 0
+
+# Display accuracy metrics
+print("Precision: {:.4f}".format(precision))
+print("Recall: {:.4f}".format(recall))
+print("Accuracy: {:.4f}".format(accuracy))
+
+# Draw bounding boxes and labels on the image
+for i in idxs.flatten():
+    (x, y, w, h) = boxes[i]
+    color = [int(c) for c in COLORS[classIDs[i]]]
+    cv2.rectangle(image, (x, y), (x + w, y + h), color, 2)
+    text = "{}: {:.4f}".format(LABELS[classIDs[i]], confidences[i])
+    cv2.putText(image, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+# Display the output image
+cv2.imshow("Output", image)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
+
+Third code -> test2_multipleImagesAccuracyPlotting
+
+import matplotlib
+matplotlib.use('Agg')  # Use 'Agg' backend for non-interactive plotting
+import numpy as np
+import argparse
+import cv2
+import os
+import matplotlib.pyplot as plt
+
+def calculate_iou(boxA, boxB):
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[0] + boxA[2], boxB[0] + boxB[2])
+    yB = min(boxA[1] + boxA[3], boxB[1] + boxB[3])
+    intersection_area = max(0, xB - xA + 1) * max(0, yB - yA + 1)
+    boxA_area = (boxA[2] + 1) * (boxA[3] + 1)
+    boxB_area = (boxB[2] + 1) * (boxB[3] + 1)
+    iou = intersection_area / float(boxA_area + boxB_area - intersection_area)
+    return iou
+
+def load_annotations(annotations_file):
+    annotations = []
+    with open(annotations_file, "r") as f:
+        for line in f:
+            parts = line.strip().split()
+            classID = int(parts[0])
+            x, y, w, h = map(int, parts[1:])
+            annotations.append([classID, x, y, w, h])
+    return annotations
+
+ap = argparse.ArgumentParser()
+ap.add_argument("-i", "--images", nargs='+', required=True, help="paths to input images")
+ap.add_argument("-c", "--confidence", type=float, default=0.5, help="minimum probability to filter weak detections")
+ap.add_argument("-t", "--threshold", type=float, default=0.3, help="threshold when applying non-maxima suppression")
+ap.add_argument("-gt", "--ground_truths", nargs='+', required=True, help="paths to ground truth annotations files")
+args = vars(ap.parse_args())
+
+labelsPath = os.path.sep.join(["coco.txt"])
+LABELS = open(labelsPath).read().strip().split("\n")
+
+np.random.seed(42)
+COLORS = np.random.randint(0, 255, size=(len(LABELS), 3), dtype="uint8")
+
+weightsPath = os.path.sep.join(["yolov3.weights"])
+configPath = os.path.sep.join(["yolov3.cfg"])
+net = cv2.dnn.readNetFromDarknet(configPath, weightsPath)
+ln = net.getLayerNames()
+ln = [ln[i - 1] for i in net.getUnconnectedOutLayers()]
+
+accuracies = []
+precisions = []
+recalls = []
+image_names = []
+
+for image_path, gt_path in zip(args["images"], args["ground_truths"]):
+    image = cv2.imread(image_path)
+    (H, W) = image.shape[:2]
+
+    blob = cv2.dnn.blobFromImage(image, 1 / 255.0, (416, 416), swapRB=True, crop=False)
+    net.setInput(blob)
+    layerOutputs = net.forward(ln)
+
+    boxes = []
+    confidences = []
+    classIDs = []
+
+    for output in layerOutputs:
+        for detection in output:
+            scores = detection[5:]
+            classID = np.argmax(scores)
+            confidence = scores[classID]
+
+            if confidence > args["confidence"]:
+                box = detection[0:4] * np.array([W, H, W, H])
+                (centerX, centerY, width, height) = box.astype("int")
+                x = int(centerX - (width / 2))
+                y = int(centerY - (height / 2))
+                boxes.append([x, y, int(width), int(height)])
+                confidences.append(float(confidence))
+                classIDs.append(classID)
+
+    idxs = cv2.dnn.NMSBoxes(boxes, confidences, args["confidence"], args["threshold"])
+
+    gt_annotations = load_annotations(gt_path)
+
+    total_gt_objects = len(gt_annotations)
+    tp = 0  # True Positives
+
+    for i in idxs.flatten():
+        pred_box = boxes[i]
+        pred_classID = classIDs[i]
+
+        for gt_annotation in gt_annotations:
+            gt_classID = gt_annotation[0]
+            gt_box = gt_annotation[1:]
+            if pred_classID == gt_classID:
+                iou = calculate_iou(pred_box, gt_box)
+                if iou >= 0.5:
+                    tp += 1
+                    break
+
+    accuracy = tp / len(idxs) if len(idxs) > 0 else 0
+    recall = tp / total_gt_objects if total_gt_objects > 0 else 0
+    precision = tp / total_gt_objects if total_gt_objects > 0 else 0
+
+    accuracies.append(accuracy)
+    recalls.append(recall)
+    precisions.append(precision)
+    image_names.append(os.path.basename(image_path))
+
+# Plotting the results
+x = np.arange(len(image_names))
+
+fig, ax = plt.subplots(figsize=(12, 8))
+ax.plot(x, accuracies, label='Accuracy', color='b', marker='o')
+ax.plot(x, recalls, label='Recall', color='g', marker='x')
+ax.plot(x, precisions, label='Precision', color='r', marker='s')
+
+ax.set_xlabel('Images')
+ax.set_ylabel('Metrics')
+ax.set_title('Accuracy, Precision, and Recall for Each Image')
+ax.set_xticks(x)
+ax.set_xticklabels(image_names, rotation=90)
+ax.legend()
+
+fig.tight_layout()
+
+# Save the plot to a file
+plt.savefig("classification_metrics.png")
+
+print("Plot saved as classification_metrics.png")
